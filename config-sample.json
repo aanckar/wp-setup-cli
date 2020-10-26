@@ -1,0 +1,18 @@
+{
+  "localDevDir": "path/to/dir",
+  "localPluginDir": "path/to/plugins",
+  "wpUsername": "User",
+  "wpEmail": "user@example.com",
+  "projects": [
+    {
+      "name": "Test",
+      "theme": "test",
+      "host": "example.com",
+      "username": "test",
+      "url": "test.example.com",
+      "siteTitle": "Test",
+      "localWwwDir": "/path/to/www",
+      "remoteWwwDir": "/home/user/path/to/www"
+    }
+  ]
+}
