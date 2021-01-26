@@ -6,7 +6,6 @@ const { prompt } = require("enquirer");
 const Listr = require("listr");
 const { NodeSSH } = require("node-ssh");
 const Observable = require("zen-observable");
-const terminalLink = require("terminal-link");
 const config = require("./config.json");
 
 function ls(basedir) {
@@ -27,6 +26,10 @@ async function localExec(cmd) {
   }
 }
 
+function getLinuxDir(dir) {
+  return dir.replace(/\\/g, "/").replace("C:", "/mnt/c");
+}
+
 async function run() {
   const response = await prompt([
     {
@@ -40,6 +43,11 @@ async function run() {
       result(item) {
         return Object.values(this.map(item))[0];
       },
+    },
+    {
+      type: "password",
+      name: "password",
+      message: "Enter SSH password",
     },
     {
       type: "input",
@@ -58,31 +66,29 @@ async function run() {
     },
   ]).catch(console.error);
 
-  if (!response) {
-    return;
-  }
-
   const { project } = response;
 
-  const devDirs = ls(config.devDir);
-  const localPlugins = ls(config.pluginDir);
+  const localDevDir = getLinuxDir(config.localDevDir);
+  const localPluginDir = getLinuxDir(config.localPluginDir);
+  const localProjectWwwDir = getLinuxDir(project.localWwwDir);
+
+  const devProjects = ls(localDevDir);
+  const localPlugins = ls(localPluginDir);
 
   const plugins = {
     dev: [],
     local: [],
     repo: [],
   };
-  ls(path.join(project.localWwwDir, "wp-content", "plugins")).forEach(
-    (item) => {
-      if (devDirs.includes(item)) {
-        plugins.dev.push(item);
-      } else if (localPlugins.includes(item)) {
-        plugins.local.push(item);
-      } else {
-        plugins.repo.push(item);
-      }
+  ls(path.join(localProjectWwwDir, "wp-content", "plugins")).forEach((item) => {
+    if (devProjects.includes(item)) {
+      plugins.dev.push(item);
+    } else if (localPlugins.includes(item)) {
+      plugins.local.push(item);
+    } else {
+      plugins.repo.push(item);
     }
-  );
+  });
 
   const ssh = new NodeSSH();
   async function remoteExec(cmd) {
@@ -104,7 +110,7 @@ async function run() {
           await ssh.connect({
             host: project.host,
             username: project.username,
-            privateKey: `${require("os").homedir()}/.ssh/id_rsa`,
+            password: response.password,
           });
         } catch (e) {
           console.error(e);
@@ -130,7 +136,7 @@ async function run() {
           }`
         );
         await remoteExec(
-          `wp core install --url=${project.siteUrl} --title=${project.siteTitle} --admin_name=${config.wpUsername} --admin_password=${response.wpAdminPassword} --admin_email=${config.wpEmail}`
+          `wp core install --url=${project.url} --title=${project.siteTitle} --admin_name=${config.wpUsername} --admin_password=${response.wpAdminPassword} --admin_email=${config.wpEmail}`
         );
         await remoteExec("rm -rf index.html cgi-bin");
       },
@@ -157,7 +163,7 @@ async function run() {
         new Observable(async (observer) => {
           for (let plugin of plugins.local) {
             observer.next(plugin);
-            const cmd = `rsync -chav ${config.devDir}/wordpress/plugins/${plugin}/* ${host}:${project.remoteWwwDir}/wp-content/plugins/${plugin}
+            const cmd = `rsync -chav ${localDevDir}/wordpress/plugins/${plugin}/* ${host}:${project.remoteWwwDir}/wp-content/plugins/${plugin}
             `;
             try {
               await localExec(cmd);
@@ -177,7 +183,7 @@ async function run() {
         new Observable(async (observer) => {
           for (let plugin of plugins.dev) {
             observer.next(plugin);
-            const cmd = `rsync -chav --filter=". rsync-filter.txt" ${config.devDir}/${plugin}/* ${host}:${project.remoteWwwDir}/wp-content/plugins/${plugin}
+            const cmd = `rsync -chav --filter=". rsync-filter.txt" ${localDevDir}/${plugin}/* ${host}:${project.remoteWwwDir}/wp-content/plugins/${plugin}
             `;
             try {
               await localExec(cmd);
@@ -194,7 +200,7 @@ async function run() {
       title: "Copy theme",
       task: async () => {
         const localTheme = project?.localTheme || `${project.theme}-theme`;
-        const cmd = `rsync -chav --filter=". rsync-filter.txt" ${config.devDir}/${localTheme}/* ${host}:${project.remoteWwwDir}/wp-content/themes/${project.theme}
+        const cmd = `rsync -chav --filter=". rsync-filter.txt" ${localDevDir}/${localTheme}/* ${host}:${project.remoteWwwDir}/wp-content/themes/${project.theme}
         `;
         try {
           await localExec(cmd);
@@ -209,9 +215,6 @@ async function run() {
   await tasks.run().catch((err) => {
     console.error(err);
   });
-  const link = terminalLink("Site is live", `https://${project.siteUrl}`);
-  console.log("All done");
-  console.log(link);
   process.exit();
 }
 
