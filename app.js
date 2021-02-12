@@ -91,10 +91,10 @@ async function run() {
   });
 
   const ssh = new NodeSSH();
-  async function remoteExec(cmd) {
+  async function remoteExec(cmd, cwd = "") {
     try {
       await ssh.execCommand(cmd, {
-        cwd: project.remoteWwwDir,
+        cwd: cwd || project.remoteWwwDir,
       });
     } catch (e) {
       console.error(e);
@@ -183,7 +183,7 @@ async function run() {
         new Observable(async (observer) => {
           for (let plugin of plugins.dev) {
             observer.next(plugin);
-            const cmd = `rsync -chav --filter=". rsync-filter.txt" ${localDevDir}/${plugin}/* ${host}:${project.remoteWwwDir}/wp-content/plugins/${plugin}
+            const cmd = `rsync -chav ${localDevDir}/${plugin}/dist/* ${host}:${project.remoteWwwDir}/wp-content/plugins/${plugin}
             `;
             try {
               await localExec(cmd);
@@ -191,24 +191,37 @@ async function run() {
               console.error(e);
             }
           }
-          observer.next("Activate plugins");
-          await remoteExec(`wp plugin activate ${plugins.dev.join(" ")}`);
+          try {
+            observer.next("Activate plugins");
+            await remoteExec(`wp plugin activate ${plugins.dev.join(" ")}`);
+          } catch (e) {
+            console.error(e);
+          }
           observer.complete();
         }),
     },
     {
-      title: "Copy theme",
-      task: async () => {
-        const localTheme = project?.localTheme || `${project.theme}-theme`;
-        const cmd = `rsync -chav --filter=". rsync-filter.txt" ${localDevDir}/${localTheme}/* ${host}:${project.remoteWwwDir}/wp-content/themes/${project.theme}
+      title: "Install theme",
+      task: () =>
+        new Observable(async (observer) => {
+          const localTheme = project?.localTheme || `${project.theme}-theme`;
+          const cmd = `rsync -chav ${localDevDir}/${localTheme}/dist/* ${host}:${project.remoteWwwDir}/wp-content/themes/${project.theme}
         `;
-        try {
-          await localExec(cmd);
-          await remoteExec(`wp theme activate ${project.theme}`);
-        } catch (e) {
-          console.error(e);
-        }
-      },
+          try {
+            observer.next("Copy theme files");
+            await localExec(cmd);
+            observer.next("Installing theme dependencies");
+            await remoteExec(
+              "composer install",
+              `${project.remoteWwwDir}/wp-content/themes/${project.theme}`
+            );
+            observer.next("Activate theme");
+            await remoteExec(`wp theme activate ${project.theme}`);
+          } catch (e) {
+            console.error(e);
+          }
+          observer.complete();
+        }),
     },
   ]);
 
